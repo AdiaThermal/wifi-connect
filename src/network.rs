@@ -3,13 +3,14 @@ use std::net::Ipv4Addr;
 use std::process;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use network_manager::{
     AccessPoint, AccessPointCredentials, Connection, ConnectionState, Connectivity, Device,
     DeviceState, DeviceType, NetworkManager, Security, ServiceState,
 };
 
+use auth_watch::AuthWatch;
 use config::Config;
 use dnsmasq::{start_dnsmasq, stop_dnsmasq};
 use errors::*;
@@ -230,8 +231,18 @@ impl NetworkCommandHandler {
 
             let credentials = init_access_point_credentials(access_point, identity, passphrase);
 
+            let started = Instant::now();
+            let auth_watch = if self.config.activation_timeout > 0 {
+                AuthWatch::start(self.device.interface())
+            } else {
+                None
+            };
+
             match wifi_device.connect(access_point, &credentials) {
                 Ok((connection, state)) => {
+                    let state =
+                        self.extend_activation_wait(&connection, state, started, &auth_watch);
+
                     if state == ConnectionState::Activated {
                         match wait_for_connectivity(&self.manager, 20) {
                             Ok(has_connectivity) => {
@@ -247,14 +258,24 @@ impl NetworkCommandHandler {
                         return Ok(true);
                     }
 
-                    if let Err(err) = connection.delete() {
-                        error!("Deleting connection object failed: {}", err)
-                    }
+                    if self.config.keep_failed_profile {
+                        // NetworkManager keeps retrying it once the portal is
+                        // gone; a later portal submission for the same SSID
+                        // replaces it (delete_existing_connections_to_same_network).
+                        warn!(
+                            "Connection to access point not activated '{}': {:?}; keeping the profile",
+                            ssid, state
+                        );
+                    } else {
+                        if let Err(err) = connection.delete() {
+                            error!("Deleting connection object failed: {}", err)
+                        }
 
-                    warn!(
-                        "Connection to access point not activated '{}': {:?}",
-                        ssid, state
-                    );
+                        warn!(
+                            "Connection to access point not activated '{}': {:?}",
+                            ssid, state
+                        );
+                    }
                 }
                 Err(e) => {
                     warn!("Error connecting to access point '{}': {}", ssid, e);
@@ -267,6 +288,40 @@ impl NetworkCommandHandler {
         self.portal_connection = Some(create_portal(&self.device, &self.config)?);
 
         Ok(false)
+    }
+
+    /// The network-manager crate has already waited up to its method timeout
+    /// (15s) for the connection to activate. With --activation-timeout, keep
+    /// polling the profile until that many seconds have passed in total, so a
+    /// slow AP or NetworkManager's own retry can still succeed, but stop as
+    /// soon as NetworkManager rejects the credentials.
+    fn extend_activation_wait(
+        &self,
+        connection: &Connection,
+        mut state: ConnectionState,
+        started: Instant,
+        auth_watch: &Option<AuthWatch>,
+    ) -> ConnectionState {
+        let timeout = Duration::from_secs(self.config.activation_timeout);
+
+        while state != ConnectionState::Activated && started.elapsed() < timeout {
+            if auth_watch.as_ref().map_or(false, |w| w.credentials_rejected()) {
+                warn!("Credentials rejected by NetworkManager; not waiting any longer");
+                break;
+            }
+
+            thread::sleep(Duration::from_secs(1));
+
+            state = match connection.get_state() {
+                Ok(state) => state,
+                Err(err) => {
+                    warn!("Getting connection state failed: {}", err);
+                    break;
+                }
+            };
+        }
+
+        state
     }
 }
 

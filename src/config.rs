@@ -12,6 +12,7 @@ const DEFAULT_SSID: &str = "WiFi Connect";
 const DEFAULT_ACTIVITY_TIMEOUT: &str = "0";
 const DEFAULT_UI_DIRECTORY: &str = "ui";
 const DEFAULT_LISTENING_PORT: &str = "80";
+const DEFAULT_ACTIVATION_TIMEOUT: &str = "0";
 
 #[derive(Clone)]
 pub struct Config {
@@ -23,6 +24,8 @@ pub struct Config {
     pub listening_port: u16,
     pub activity_timeout: u64,
     pub ui_directory: PathBuf,
+    pub activation_timeout: u64,
+    pub keep_failed_profile: bool,
 }
 
 pub fn get_config() -> Config {
@@ -109,6 +112,25 @@ pub fn get_config() -> Config {
                 ))
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("activation-timeout")
+                .long("activation-timeout")
+                .value_name("activation_timeout")
+                .help(
+                    "Wait up to this many seconds in total for a submitted network to \
+                     connect, ending early if the credentials are rejected (default: 0 - \
+                     NetworkManager call timeout only)",
+                )
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("keep-failed-profile")
+                .long("keep-failed-profile")
+                .help(
+                    "Keep the NetworkManager profile of a network that failed to connect, \
+                     so NetworkManager can keep retrying it (default: delete it)",
+                ),
+        )
         .get_matches();
 
     let interface: Option<String> = matches.value_of("portal-interface").map_or_else(
@@ -157,6 +179,21 @@ pub fn get_config() -> Config {
 
     let ui_directory = get_ui_directory(matches.value_of("ui-directory"));
 
+    let activation_timeout =
+        u64::from_str(&matches.value_of("activation-timeout").map_or_else(
+            || {
+                env::var("ACTIVATION_TIMEOUT")
+                    .unwrap_or_else(|_| DEFAULT_ACTIVATION_TIMEOUT.to_string())
+            },
+            String::from,
+        ))
+        .expect("Cannot parse activation timeout");
+
+    let keep_failed_profile = matches.is_present("keep-failed-profile")
+        || env::var("KEEP_FAILED_PROFILE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
     Config {
         interface,
         ssid,
@@ -166,6 +203,8 @@ pub fn get_config() -> Config {
         listening_port,
         activity_timeout,
         ui_directory,
+        activation_timeout,
+        keep_failed_profile,
     }
 }
 

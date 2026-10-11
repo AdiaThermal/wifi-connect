@@ -12,6 +12,8 @@ extern crate serde_derive;
 #[macro_use]
 extern crate clap;
 
+extern crate dbus;
+
 extern crate env_logger;
 extern crate iron;
 extern crate iron_cors;
@@ -24,6 +26,7 @@ extern crate router;
 extern crate serde_json;
 extern crate staticfile;
 
+mod auth_watch;
 mod config;
 mod dnsmasq;
 mod errors;

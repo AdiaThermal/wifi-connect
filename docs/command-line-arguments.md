@@ -54,6 +54,22 @@ Command line options have environment variable counterpart. If both a command li
 
     Default: _0 - no timeout_
 
+*   **--activation-timeout** timeout, **$ACTIVATION_TIMEOUT**
+
+    Wait up to this many seconds in total for a network submitted through the
+    portal to connect. NetworkManager's own retries during that time count, and
+    the wait ends early if NetworkManager rejects the credentials.
+
+    Default: _0 - only the NetworkManager call timeout (15s)_
+
+*   **--keep-failed-profile**, **$KEEP_FAILED_PROFILE**
+
+    Keep the NetworkManager profile of a network that failed to connect instead
+    of deleting it, so NetworkManager keeps retrying it after the portal exits.
+    `$KEEP_FAILED_PROFILE` accepts `1` or `true`.
+
+    Default: _profile is deleted_
+
 *   **-u, --ui-directory** ui_directory, **$UI_DIRECTORY**
 
     Web UI directory location

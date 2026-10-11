@@ -1137,6 +1137,7 @@ name = "wifi-connect"
 version = "4.11.90"
 dependencies = [
  "clap",
+ "dbus",
  "env_logger",
  "error-chain",
  "iron",

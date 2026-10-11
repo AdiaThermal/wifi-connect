@@ -8,6 +8,7 @@ rust-version = "1.76"
 
 [dependencies]
 clap = "2.24"
+dbus = "0.5"
 iron = "0.6"
 iron-cors = "0.8"
 staticfile = "0.5"
