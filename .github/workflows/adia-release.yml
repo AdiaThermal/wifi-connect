@@ -1,0 +1,75 @@
+# Adia fork: build the aarch64 binary and, on a v*-adia.* tag, publish a
+# release with the same asset names as upstream (wifi-connect-<target>.tar.gz,
+# wifi-connect-ui.tar.gz) plus SHA256SUMS. Upstream's Flowzone workflow needs
+# balena's secrets and doesn't run here.
+name: Adia release
+
+on:
+  push:
+    branches: [adia]
+    tags: ['v*-adia.*']
+  pull_request:
+    branches: [adia]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: 1.76.0      # Cargo.toml rust-version
+  CROSS_VERSION: 0.2.5
+  UPSTREAM_UI_RELEASE: v4.11.90
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      TARGET: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain, cross and strip
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          cargo install cross --locked --version "$CROSS_VERSION"
+          sudo apt-get update -q
+          sudo apt-get install -y -q binutils-aarch64-linux-gnu
+
+      - name: Build
+        run: cross +"$RUST_TOOLCHAIN" build --release --locked --target "$TARGET"
+
+      - name: Package
+        run: |
+          mkdir dist
+          bin="target/$TARGET/release/wifi-connect"
+          aarch64-linux-gnu-strip "$bin"
+          tar -czf "dist/wifi-connect-$TARGET.tar.gz" -C "$(dirname "$bin")" wifi-connect
+          curl -fsSL -o dist/wifi-connect-ui.tar.gz \
+            "https://github.com/balena-os/wifi-connect/releases/download/$UPSTREAM_UI_RELEASE/wifi-connect-ui.tar.gz"
+          (cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body: |
+            Upstream balena-os/wifi-connect plus the
+            --activation-timeout / --keep-failed-profile patch (see the
+            branch history). UI is upstream ${{ env.UPSTREAM_UI_RELEASE }}.
+            Asset checksums are in SHA256SUMS.
