@@ -13,6 +13,7 @@ const DEFAULT_ACTIVITY_TIMEOUT: &str = "0";
 const DEFAULT_UI_DIRECTORY: &str = "ui";
 const DEFAULT_LISTENING_PORT: &str = "80";
 const DEFAULT_ACTIVATION_TIMEOUT: &str = "0";
+const DEFAULT_IDLE_TIMEOUT: &str = "0";
 
 #[derive(Clone)]
 pub struct Config {
@@ -26,6 +27,8 @@ pub struct Config {
     pub ui_directory: PathBuf,
     pub activation_timeout: u64,
     pub keep_failed_profile: bool,
+    pub idle_timeout: u64,
+    pub status_file: Option<PathBuf>,
 }
 
 pub fn get_config() -> Config {
@@ -131,6 +134,26 @@ pub fn get_config() -> Config {
                      so NetworkManager can keep retrying it (default: delete it)",
                 ),
         )
+        .arg(
+            Arg::with_name("idle-timeout")
+                .long("idle-timeout")
+                .value_name("idle_timeout")
+                .help(
+                    "Once the portal page has been opened, exit if no client request arrives \
+                     for this many seconds (default: 0 - never)",
+                )
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("status-file")
+                .long("status-file")
+                .value_name("status_file")
+                .help(
+                    "Write the portal state and the time it will close (system uptime \
+                     seconds) to this file as JSON",
+                )
+                .takes_value(true),
+        )
         .get_matches();
 
     let interface: Option<String> = matches.value_of("portal-interface").map_or_else(
@@ -189,6 +212,17 @@ pub fn get_config() -> Config {
         ))
         .expect("Cannot parse activation timeout");
 
+    let idle_timeout = u64::from_str(&matches.value_of("idle-timeout").map_or_else(
+        || env::var("IDLE_TIMEOUT").unwrap_or_else(|_| DEFAULT_IDLE_TIMEOUT.to_string()),
+        String::from,
+    ))
+    .expect("Cannot parse idle timeout");
+
+    let status_file: Option<PathBuf> = matches
+        .value_of("status-file")
+        .map_or_else(|| env::var("STATUS_FILE").ok(), |v| Some(v.to_string()))
+        .map(PathBuf::from);
+
     let keep_failed_profile = matches.is_present("keep-failed-profile")
         || env::var("KEEP_FAILED_PROFILE")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -205,6 +239,8 @@ pub fn get_config() -> Config {
         ui_directory,
         activation_timeout,
         keep_failed_profile,
+        idle_timeout,
+        status_file,
     }
 }
 

@@ -2,11 +2,13 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::net::Ipv4Addr;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
 
 use iron::modifiers::Redirect;
 use iron::prelude::*;
 use iron::{
-    headers, status, typemap, AfterMiddleware, Iron, IronError, IronResult, Request, Response, Url,
+    headers, status, typemap, AfterMiddleware, BeforeMiddleware, Iron, IronError, IronResult,
+    Request, Response, Url,
 };
 use iron_cors::CorsMiddleware;
 use mount::Mount;
@@ -20,6 +22,7 @@ use staticfile::Static;
 use errors::*;
 use exit::{exit, ExitResult};
 use network::{NetworkCommand, NetworkCommandResponse};
+use portal_status::PortalStatus;
 
 struct RequestSharedState {
     gateway: Ipv4Addr,
@@ -111,6 +114,17 @@ where
     ))
 }
 
+struct ActivityMiddleware {
+    status: Arc<PortalStatus>,
+}
+
+impl BeforeMiddleware for ActivityMiddleware {
+    fn before(&self, _req: &mut Request) -> IronResult<()> {
+        self.status.record_activity();
+        Ok(())
+    }
+}
+
 struct RedirectMiddleware;
 
 impl AfterMiddleware for RedirectMiddleware {
@@ -138,6 +152,7 @@ pub fn start_server(
     network_tx: Sender<NetworkCommand>,
     exit_tx: Sender<ExitResult>,
     ui_directory: &PathBuf,
+    status: Arc<PortalStatus>,
 ) {
     let exit_tx_clone = exit_tx.clone();
     let gateway_clone = gateway;
@@ -163,6 +178,7 @@ pub fn start_server(
     let cors_middleware = CorsMiddleware::with_allow_any();
 
     let mut chain = Chain::new(assets);
+    chain.link_before(ActivityMiddleware { status });
     chain.link(Write::<RequestSharedState>::both(request_state));
     chain.link_after(RedirectMiddleware);
     chain.link_around(cors_middleware);
