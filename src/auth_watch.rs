@@ -2,6 +2,12 @@
 //! attempt, so an extended activation wait (`--activation-timeout`) can end as
 //! soon as NetworkManager rejects the credentials instead of running out the
 //! clock on a wrong password.
+//!
+//! Only a disconnect during the WPA handshake counts as rejected credentials.
+//! NetworkManager also enters NEED_AUTH briefly at the start of every
+//! activation (reason NONE) and when association times out (reason
+//! SUPPLICANT_TIMEOUT, e.g. a router ignoring the client); neither means the
+//! password is wrong.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
@@ -17,7 +23,7 @@ const NM_DEVICE_INTERFACE: &str = "org.freedesktop.NetworkManager.Device";
 
 // NMDeviceState / NMDeviceStateReason values (libnm nm-dbus-interface.h).
 const NM_DEVICE_STATE_NEED_AUTH: u32 = 60;
-const NM_DEVICE_STATE_REASON_NO_SECRETS: u32 = 7;
+const NM_DEVICE_STATE_REASON_SUPPLICANT_DISCONNECT: u32 = 8;
 
 const POLL_MS: i32 = 200;
 const DBUS_TIMEOUT_MS: i32 = 5000;
@@ -64,7 +70,7 @@ impl AuthWatch {
                         message.get3();
 
                     if new_state == Some(NM_DEVICE_STATE_NEED_AUTH)
-                        || reason == Some(NM_DEVICE_STATE_REASON_NO_SECRETS)
+                        && reason == Some(NM_DEVICE_STATE_REASON_SUPPLICANT_DISCONNECT)
                     {
                         thread_rejected.store(true, Ordering::SeqCst);
                     }
@@ -81,8 +87,8 @@ impl AuthWatch {
         }
     }
 
-    /// NetworkManager asked for new secrets or failed for lack of them since
-    /// the watch started.
+    /// NetworkManager asked for new secrets after the WPA handshake failed
+    /// since the watch started.
     pub fn credentials_rejected(&self) -> bool {
         self.rejected.load(Ordering::SeqCst)
     }
