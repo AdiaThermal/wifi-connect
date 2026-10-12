@@ -1,5 +1,6 @@
-# Adia fork: build the aarch64 binary and, on a v*-adia.* tag, publish a
-# release with the same asset names as upstream (wifi-connect-<target>.tar.gz,
+# Adia fork: build the aarch64 binary on every push to adia, and when a
+# release is published (tag v<upstream>-adia.N, target adia) attach assets
+# with the same names as upstream's (wifi-connect-<target>.tar.gz,
 # wifi-connect-ui.tar.gz) plus SHA256SUMS. Upstream's Flowzone workflow needs
 # balena's secrets and doesn't run here.
 name: Adia release
@@ -7,7 +8,8 @@ name: Adia release
 on:
   push:
     branches: [adia]
-    tags: ['v*-adia.*']
+  release:
+    types: [published]
   pull_request:
     branches: [adia]
   workflow_dispatch:
