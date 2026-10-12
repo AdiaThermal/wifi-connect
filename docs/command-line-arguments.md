@@ -70,6 +70,36 @@ Command line options have environment variable counterpart. If both a command li
 
     Default: _profile is deleted_
 
+*   **--idle-timeout** timeout, **$IDLE_TIMEOUT**
+
+    Once the portal page has been opened, exit if no request from a client
+    arrives for this many seconds. Before the page is opened,
+    `--activity-timeout` applies as usual. No deadline runs while a submitted
+    network is being connected, and the idle clock restarts if that fails.
+
+    Default: _0 - never (the portal stays up once opened)_
+
+*   **--status-file** path, **$STATUS_FILE**
+
+    Write the portal's state to this file as JSON, rewritten atomically on
+    every change. Times are seconds on the system uptime clock (first field of
+    `/proc/uptime`).
+
+    ```json
+    {"version":1,"pid":1234,"state":"opened","exit_reason":null,
+     "started_at":512.3,"opened_at":530.1,"last_activity_at":561.8,
+     "activity_timeout":600,"idle_timeout":300,
+     "deadline":861.8,"updated_at":561.8}
+    ```
+
+    `state` is `waiting`, `opened`, `connecting` or `exited`; `exit_reason`
+    (when exited) is `connected`, `timeout`, `idle`, `signal` or `error`.
+    `deadline` is when the portal will close, or `null` if it has no deadline
+    (no timeouts, or a connection attempt in progress). A file left by a
+    process that was killed still names its `pid`, so check it is running.
+
+    Default: _none_
+
 *   **-u, --ui-directory** ui_directory, **$UI_DIRECTORY**
 
     Web UI directory location

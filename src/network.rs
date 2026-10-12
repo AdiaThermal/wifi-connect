@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::net::Ipv4Addr;
 use std::process;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,7 @@ use config::Config;
 use dnsmasq::{start_dnsmasq, stop_dnsmasq};
 use errors::*;
 use exit::{exit, trap_exit_signals, ExitResult};
+use portal_status::PortalStatus;
 use server::start_server;
 
 pub enum NetworkCommand {
@@ -47,7 +49,7 @@ struct NetworkCommandHandler {
     dnsmasq: process::Child,
     server_tx: Sender<NetworkCommandResponse>,
     network_rx: Receiver<NetworkCommand>,
-    activated: bool,
+    status: Arc<PortalStatus>,
 }
 
 impl NetworkCommandHandler {
@@ -69,12 +71,13 @@ impl NetworkCommandHandler {
 
         let (server_tx, server_rx) = channel();
 
-        Self::spawn_server(config, exit_tx, server_rx, network_tx.clone());
+        let status = Arc::new(PortalStatus::new(config));
 
-        Self::spawn_activity_timeout(config, network_tx);
+        Self::spawn_server(config, exit_tx, server_rx, network_tx.clone(), status.clone());
+
+        Self::spawn_deadline_watcher(status.clone(), network_tx);
 
         let config = config.clone();
-        let activated = false;
 
         Ok(NetworkCommandHandler {
             manager,
@@ -85,7 +88,7 @@ impl NetworkCommandHandler {
             dnsmasq,
             server_tx,
             network_rx,
-            activated,
+            status,
         })
     }
 
@@ -94,6 +97,7 @@ impl NetworkCommandHandler {
         exit_tx: &Sender<ExitResult>,
         server_rx: Receiver<NetworkCommandResponse>,
         network_tx: Sender<NetworkCommand>,
+        status: Arc<PortalStatus>,
     ) {
         let gateway = config.gateway;
         let listening_port = config.listening_port;
@@ -108,25 +112,24 @@ impl NetworkCommandHandler {
                 network_tx,
                 exit_tx_server,
                 &ui_directory,
+                status,
             );
         });
     }
 
-    fn spawn_activity_timeout(config: &Config, network_tx: Sender<NetworkCommand>) {
-        let activity_timeout = config.activity_timeout;
-
-        if activity_timeout == 0 {
+    /// Ask the command loop to exit once the portal's deadline has passed
+    /// (see PortalStatus). The loop re-checks before exiting, as activity may
+    /// have moved the deadline since.
+    fn spawn_deadline_watcher(status: Arc<PortalStatus>, network_tx: Sender<NetworkCommand>) {
+        if !status.has_timeouts() {
             return;
         }
 
-        thread::spawn(move || {
-            thread::sleep(Duration::from_secs(activity_timeout));
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_millis(500));
 
-            if let Err(err) = network_tx.send(NetworkCommand::Timeout) {
-                error!(
-                    "Sending NetworkCommand::Timeout failed: {}",
-                    err.to_string()
-                );
+            if status.deadline_passed() && network_tx.send(NetworkCommand::Timeout).is_err() {
+                return;
             }
         });
     }
@@ -160,13 +163,20 @@ impl NetworkCommandHandler {
                     self.activate()?;
                 }
                 NetworkCommand::Timeout => {
-                    if !self.activated {
-                        info!("Timeout reached. Exiting...");
+                    if self.status.deadline_passed() {
+                        if self.status.is_opened() {
+                            info!("Idle timeout reached. Exiting...");
+                            self.status.mark_exited("idle");
+                        } else {
+                            info!("Timeout reached. Exiting...");
+                            self.status.mark_exited("timeout");
+                        }
                         return Ok(());
                     }
                 }
                 NetworkCommand::Exit => {
                     info!("Exiting...");
+                    self.status.mark_exited("signal");
                     return Ok(());
                 }
                 NetworkCommand::Connect {
@@ -175,6 +185,7 @@ impl NetworkCommandHandler {
                     passphrase,
                 } => {
                     if self.connect(&ssid, &identity, &passphrase)? {
+                        self.status.mark_exited("connected");
                         return Ok(());
                     }
                 }
@@ -194,6 +205,10 @@ impl NetworkCommandHandler {
     }
 
     fn stop(&mut self, exit_tx: &Sender<ExitResult>, result: ExitResult) {
+        if result.is_err() {
+            self.status.mark_exited("error");
+        }
+
         let _ = stop_dnsmasq(&mut self.dnsmasq);
 
         if let Some(ref connection) = self.portal_connection {
@@ -204,7 +219,7 @@ impl NetworkCommandHandler {
     }
 
     fn activate(&mut self) -> ExitResult {
-        self.activated = true;
+        self.status.mark_opened();
 
         let networks = get_networks(&self.access_points);
 
@@ -214,6 +229,8 @@ impl NetworkCommandHandler {
     }
 
     fn connect(&mut self, ssid: &str, identity: &str, passphrase: &str) -> Result<bool> {
+        self.status.mark_connecting();
+
         delete_existing_connections_to_same_network(&self.manager, ssid);
 
         if let Some(ref connection) = self.portal_connection {
@@ -286,6 +303,8 @@ impl NetworkCommandHandler {
         self.access_points = get_access_points(&self.device)?;
 
         self.portal_connection = Some(create_portal(&self.device, &self.config)?);
+
+        self.status.mark_connect_failed();
 
         Ok(false)
     }

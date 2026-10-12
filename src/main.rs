@@ -33,6 +33,7 @@ mod errors;
 mod exit;
 mod logger;
 mod network;
+mod portal_status;
 mod privileges;
 mod server;
 
