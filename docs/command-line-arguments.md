@@ -57,8 +57,9 @@ Command line options have environment variable counterpart. If both a command li
 *   **--activation-timeout** timeout, **$ACTIVATION_TIMEOUT**
 
     Wait up to this many seconds in total for a network submitted through the
-    portal to connect. NetworkManager's own retries during that time count, and
-    the wait ends early if NetworkManager rejects the credentials.
+    portal to connect. NetworkManager's own retries during that time count. The
+    wait ends early if NetworkManager rejects the credentials, or gives up on
+    the attempt and does not retry within a few seconds.
 
     Default: _0 - only the NetworkManager call timeout (15s)_
 
