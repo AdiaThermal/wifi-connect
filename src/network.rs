@@ -19,6 +19,11 @@ use exit::{exit, trap_exit_signals, ExitResult};
 use portal_status::PortalStatus;
 use server::start_server;
 
+/// How long the profile may stay without an active connection before the
+/// extended wait treats the attempt as abandoned by NetworkManager. Long
+/// enough for NetworkManager to start its own immediate autoconnect retry.
+const GAVE_UP_AFTER: Duration = Duration::from_secs(5);
+
 pub enum NetworkCommand {
     Activate,
     Timeout,
@@ -313,7 +318,8 @@ impl NetworkCommandHandler {
     /// (15s) for the connection to activate. With --activation-timeout, keep
     /// polling the profile until that many seconds have passed in total, so a
     /// slow AP or NetworkManager's own retry can still succeed, but stop as
-    /// soon as NetworkManager rejects the credentials.
+    /// soon as NetworkManager rejects the credentials or gives up on the
+    /// attempt (for example after its association timeout).
     fn extend_activation_wait(
         &self,
         connection: &Connection,
@@ -322,11 +328,23 @@ impl NetworkCommandHandler {
         auth_watch: &Option<AuthWatch>,
     ) -> ConnectionState {
         let timeout = Duration::from_secs(self.config.activation_timeout);
+        let mut inactive_since: Option<Instant> = None;
 
         while state != ConnectionState::Activated && started.elapsed() < timeout {
             if auth_watch.as_ref().map_or(false, |w| w.credentials_rejected()) {
                 warn!("Credentials rejected by NetworkManager; not waiting any longer");
                 break;
+            }
+
+            match state {
+                ConnectionState::Deactivated | ConnectionState::Unknown => {
+                    let since = *inactive_since.get_or_insert_with(Instant::now);
+                    if since.elapsed() >= GAVE_UP_AFTER {
+                        warn!("NetworkManager gave up on the connection; not waiting any longer");
+                        break;
+                    }
+                }
+                _ => inactive_since = None,
             }
 
             thread::sleep(Duration::from_secs(1));

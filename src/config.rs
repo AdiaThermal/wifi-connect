@@ -121,8 +121,9 @@ pub fn get_config() -> Config {
                 .value_name("activation_timeout")
                 .help(
                     "Wait up to this many seconds in total for a submitted network to \
-                     connect, ending early if the credentials are rejected (default: 0 - \
-                     NetworkManager call timeout only)",
+                     connect, ending early if the credentials are rejected or \
+                     NetworkManager gives up (default: 0 - NetworkManager call timeout \
+                     only)",
                 )
                 .takes_value(true),
         )
